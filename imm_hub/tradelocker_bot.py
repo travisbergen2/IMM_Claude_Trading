@@ -27,13 +27,13 @@ SETUP:
   3. Run: python tradelocker_bot.py
      Or load IMMStrategy into TradeLocker Bot Studio directly.
 """
-from __future__ import annotations
 import os
 import time
 import math
 import logging
 import requests
 import backtrader as bt
+from typing import Optional
 
 logging.basicConfig(
     level=logging.INFO,
@@ -60,7 +60,7 @@ DEBUG        = True   # set False once trading correctly
 # ──────────────────────────────────────────────────────────────────────────
 
 
-def _post(url: str, data: dict) -> dict | None:
+def _post(url: str, data: dict) -> Optional[dict]:
     try:
         r = requests.post(url, json=data, timeout=HTTP_TIMEOUT)
         if r.status_code == 200:
@@ -73,7 +73,7 @@ def _post(url: str, data: dict) -> dict | None:
     return None
 
 
-def _get(url: str) -> dict | None:
+def _get(url: str) -> Optional[dict]:
     try:
         r = requests.get(url, timeout=HTTP_TIMEOUT)
         if r.status_code == 200:
