@@ -1,0 +1,45 @@
+# IMM AGI Trading Hub Configuration
+# AquaFunded 2-Step Pro $10k — scales to any account size
+
+account:
+  size: 10000
+  daily_dd_pct: 0.05       # 5% daily drawdown limit
+  max_dd_pct: 0.10         # 10% max drawdown limit
+  broker: "aquafunded"
+  challenge_step: 2
+
+instruments:
+  macro_anchors:
+    - "DX-Y.NYB"           # DXY — master entropy source
+    - "^GSPC"              # SPX — risk-on/off
+    - "TLT"                # Bonds — rate pressure
+  tradeable:
+    - "EURUSD"
+    - "GBPUSD"
+    - "USDJPY"
+    - "AUDUSD"
+    - "XAUUSD"
+    - "USDCAD"
+    - "GBPJPY"
+    - "EURJPY"
+
+receiver:
+  forex_majors: [55, 60, 58, 65, 55]  # [TI, SG, FT, UE, AR]
+  gold:         [65, 70, 55, 60, 50]
+  indices:      [50, 65, 55, 62, 58]
+
+spectral:
+  gap_estimation_lags: 25
+  phase2_min_bars: 5
+  phase3_revival_threshold: 1.15    # κ·ρ_env must exceed Γ by 15%
+  N_tot_conservation_tolerance: 0.08
+
+risk:
+  max_risk_per_trade_pct: 0.005     # 0.5% per trade
+  max_concurrent_trades: 4
+  max_correlated_exposure: 2        # max same-direction in same group
+  daily_stop_at_dd_pct: 0.85        # lock session at 85% of daily limit
+
+ngrok:
+  port: 8000
+  auth_token: "YOUR_NGROK_AUTH_TOKEN_HERE"
