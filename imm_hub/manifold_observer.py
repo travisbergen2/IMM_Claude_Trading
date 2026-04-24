@@ -14,6 +14,9 @@ import numpy as np
 
 try:
     import yfinance as yf
+    # Silence yfinance's own verbose error/warning loggers — we handle failures ourselves
+    logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+    logging.getLogger("peewee").setLevel(logging.CRITICAL)
     YF_AVAILABLE = True
 except ImportError:
     YF_AVAILABLE = False
@@ -76,6 +79,11 @@ class ManifoldObserver:
         # EA tick feed override (populated by hub_server when EAs push ticks)
         self.ea_tick_feed: Dict[str, float] = {}
 
+        # yfinance failure tracking: suppress repeated 403 log spam
+        # stores last failure log timestamp per ticker
+        self._yf_last_warn: Dict[str, float] = {}
+        self._YF_WARN_INTERVAL = 300.0  # re-log at most once per 5 minutes
+
     # ── Public ───────────────────────────────────────────────────────
 
     async def update_all(self) -> Dict[str, ManifoldState]:
@@ -122,11 +130,19 @@ class ManifoldObserver:
         # If no live data yet, buffer stays as-is
 
     def _yf_fetch(self, symbol: str, ticker: str):
+        import time as _time
         try:
             df = yf.download(ticker, period="5d", interval="5m",
                              progress=False, auto_adjust=True)
             if df.empty:
+                now = _time.monotonic()
+                last = self._yf_last_warn.get(ticker, 0.0)
+                if now - last >= self._YF_WARN_INTERVAL:
+                    log.warning(f"yfinance: no data for {ticker} (macro unavailable — trades still fire at 50% size)")
+                    self._yf_last_warn[ticker] = now
                 return
+            # Clear failure tracker on success
+            self._yf_last_warn.pop(ticker, None)
             closes  = df["Close"].dropna().values[-self.lookback:]
             volumes = df["Volume"].dropna().values[-self.lookback:]
             highs   = df["High"].dropna().values[-self.lookback:]
@@ -137,7 +153,11 @@ class ManifoldObserver:
             for h in highs:   self._highs[symbol].append(float(h))
             for l in lows:    self._lows[symbol].append(float(l))
         except Exception as e:
-            log.debug(f"yf_fetch({ticker}): {e}")
+            now = _time.monotonic()
+            last = self._yf_last_warn.get(ticker, 0.0)
+            if now - last >= self._YF_WARN_INTERVAL:
+                log.warning(f"yfinance: {ticker} fetch failed ({type(e).__name__}) — macro unavailable")
+                self._yf_last_warn[ticker] = now
 
     # ── State computation ─────────────────────────────────────────────
 
@@ -256,9 +276,8 @@ class ManifoldObserver:
         """
         if len(returns) < 2 * window + 4:
             return 0.0
-        from manifold_observer import ManifoldObserver as _M  # avoid circular
-        d_recent = _M._estimate_spectral_gap(returns[-window:],     lags=8)
-        d_prior  = _M._estimate_spectral_gap(returns[-2*window:-window], lags=8)
+        d_recent = ManifoldObserver._estimate_spectral_gap(returns[-window:],     lags=8)
+        d_prior  = ManifoldObserver._estimate_spectral_gap(returns[-2*window:-window], lags=8)
         return float(d_recent - d_prior)
 
     @staticmethod

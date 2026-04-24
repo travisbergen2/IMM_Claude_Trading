@@ -28,7 +28,9 @@ SETUP:
      Or load IMMStrategy into TradeLocker Bot Studio directly.
 """
 from __future__ import annotations
+import os
 import time
+import math
 import logging
 import requests
 import backtrader as bt
@@ -40,9 +42,15 @@ logging.basicConfig(
 log = logging.getLogger("imm_tl")
 
 # ── CONFIG — set these ─────────────────────────────────────────────────────
-HUB_BASE_URL = "https://unsaid-arvilla-unseeded.ngrok-free.dev"  # your URL
-BOT_ID       = "remora"
-SYMBOL       = "XAUUSD"
+# Priority order for hub URL:
+#   1. IMM_HUB_URL environment variable (set this in Bot Studio / your shell)
+#   2. Hardcoded fallback below (update after each deploy.py run)
+HUB_BASE_URL = os.environ.get(
+    "IMM_HUB_URL",
+    "https://unsaid-arvilla-unseeded.ngrok-free.dev"   # update after deploy.py
+)
+BOT_ID       = os.environ.get("IMM_BOT_ID",  "remora")
+SYMBOL       = os.environ.get("IMM_SYMBOL",  "XAUUSD")
 POLL_EVERY   = 3    # poll every 3 bars
 POST_EVERY   = 1    # post every bar (hub needs dense data to detect phase)
 HTTP_TIMEOUT = 3
@@ -172,6 +180,10 @@ class IMMStrategy(bt.Strategy):
         asks = [[round(ask + i * self.pip, self.decimals), 1000.0]
                 for i in range(1, 16)]
 
+        # Volume: guard against NaN/inf that some feeds return when unavailable
+        raw_vol = float(self.data.volume[0])
+        volume  = raw_vol if math.isfinite(raw_vol) and raw_vol > 0 else 1000.0
+
         payload = {
             "type":          "tick_update",
             "symbol":        self.p.symbol,
@@ -182,7 +194,7 @@ class IMMStrategy(bt.Strategy):
             "high":          round(float(self.data.high[0]),  self.decimals),
             "low":           round(float(self.data.low[0]),   self.decimals),
             "close":         round(float(self.data.close[0]), self.decimals),
-            "volume":        float(self.data.volume[0]) if len(self.data.volume) > 0 else 1000.0,
+            "volume":        volume,
             "time":          int(time.time()),
             # Trade state — hub needs these to manage exits
             "in_trade":      self.in_trade,

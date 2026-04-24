@@ -10,3 +10,4 @@ python-dotenv>=1.0.0
 pydantic>=2.0.0
 yfinance>=0.2.28
 PyYAML>=6.0
+backtrader>=1.9.78
