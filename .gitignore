@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets / runtime
+.env
+*.env
+ngrok.log
+
+# Trade journal (runtime output, not source)
+imm_trades.jsonl
+
+# OS
+.DS_Store
+Thumbs.db
