@@ -17,9 +17,14 @@ try:
     # Silence yfinance's own verbose error/warning loggers — we handle failures ourselves
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
     logging.getLogger("peewee").setLevel(logging.CRITICAL)
+    # yfinance 1.x returns MultiIndex columns; detect this once at import time
+    import inspect as _inspect
+    _YF_HAS_MULTI_LEVEL = 'multi_level_index' in _inspect.signature(yf.download).parameters
+    del _inspect
     YF_AVAILABLE = True
 except ImportError:
     YF_AVAILABLE = False
+    _YF_HAS_MULTI_LEVEL = False
 
 from models import Config, ManifoldState, Direction, Phase
 from receiver_array import ReceiverArray
@@ -79,10 +84,9 @@ class ManifoldObserver:
         # EA tick feed override (populated by hub_server when EAs push ticks)
         self.ea_tick_feed: Dict[str, float] = {}
 
-        # yfinance failure tracking: suppress repeated 403 log spam
-        # stores last failure log timestamp per ticker
-        self._yf_last_warn: Dict[str, float] = {}
-        self._YF_WARN_INTERVAL = 300.0  # re-log at most once per 5 minutes
+        # yfinance failure tracking: warn once on first failure, then go silent
+        # for the rest of the session (avoids per-cycle spam)
+        self._yf_failed: set = set()
 
     # ── Public ───────────────────────────────────────────────────────
 
@@ -120,44 +124,51 @@ class ManifoldObserver:
 
     async def _fetch_and_buffer(self, symbol: str):
         """Fetch recent OHLCV and update rolling buffers."""
-        # For macro anchors, use yfinance
         yf_ticker = MACRO_YF_MAP.get(symbol)
-        if yf_ticker and YF_AVAILABLE:
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._yf_fetch, symbol, yf_ticker
-            )
-        # EA-fed symbols: buffers already updated by inject_ea_tick
-        # If no live data yet, buffer stays as-is
+        if not yf_ticker or not YF_AVAILABLE:
+            return
+        # Skip tickers that have permanently failed this session (no spam)
+        if yf_ticker in self._yf_failed:
+            return
+        await asyncio.get_running_loop().run_in_executor(
+            None, self._yf_fetch, symbol, yf_ticker
+        )
 
     def _yf_fetch(self, symbol: str, ticker: str):
-        import time as _time
         try:
-            df = yf.download(ticker, period="5d", interval="5m",
-                             progress=False, auto_adjust=True)
+            kwargs = dict(period="5d", interval="5m", progress=False, auto_adjust=True)
+            if _YF_HAS_MULTI_LEVEL:
+                kwargs["multi_level_index"] = False  # yfinance 1.x: flat columns
+            df = yf.download(ticker, **kwargs)
+
             if df.empty:
-                now = _time.monotonic()
-                last = self._yf_last_warn.get(ticker, 0.0)
-                if now - last >= self._YF_WARN_INTERVAL:
-                    log.warning(f"yfinance: no data for {ticker} (macro unavailable — trades still fire at 50% size)")
-                    self._yf_last_warn[ticker] = now
+                self._yf_failed.add(ticker)
+                log.warning(f"yfinance: {ticker} returned empty data — macro disabled for session")
                 return
-            # Clear failure tracker on success
-            self._yf_last_warn.pop(ticker, None)
-            closes  = df["Close"].dropna().values[-self.lookback:]
-            volumes = df["Volume"].dropna().values[-self.lookback:]
-            highs   = df["High"].dropna().values[-self.lookback:]
-            lows    = df["Low"].dropna().values[-self.lookback:]
+
+            # Flatten columns if still MultiIndex (older yfinance without the flag)
+            if hasattr(df.columns, "levels"):
+                df.columns = df.columns.droplevel(1)
+
+            def _col(name):
+                s = df[name]
+                if s.ndim > 1:
+                    s = s.iloc[:, 0]
+                return s.dropna().values[-self.lookback:]
+
+            closes  = _col("Close")
+            volumes = _col("Volume")
+            highs   = _col("High")
+            lows    = _col("Low")
 
             for c in closes:  self._closes[symbol].append(float(c))
             for v in volumes: self._volumes[symbol].append(float(v))
             for h in highs:   self._highs[symbol].append(float(h))
             for l in lows:    self._lows[symbol].append(float(l))
+
         except Exception as e:
-            now = _time.monotonic()
-            last = self._yf_last_warn.get(ticker, 0.0)
-            if now - last >= self._YF_WARN_INTERVAL:
-                log.warning(f"yfinance: {ticker} fetch failed ({type(e).__name__}) — macro unavailable")
-                self._yf_last_warn[ticker] = now
+            self._yf_failed.add(ticker)
+            log.warning(f"yfinance: {ticker} unavailable ({type(e).__name__}) — macro disabled for session")
 
     # ── State computation ─────────────────────────────────────────────
 

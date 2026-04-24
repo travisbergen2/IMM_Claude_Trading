@@ -242,12 +242,27 @@ class HubServerHTTP:
             log.info(f"Registered EA: {ea_id}")
 
 
+_NGROK_PLACEHOLDERS = {"YOUR_NGROK_AUTH_TOKEN_HERE", "PASTE_YOUR_NGROK_TOKEN_HERE", ""}
+
+
 def start_ngrok(port: int, auth_token: Optional[str] = None) -> str:
     """Start ngrok tunnel and return the public HTTPS URL."""
+    import os
+    # Allow env var override so the token is never stored in the config file
+    token = os.environ.get("NGROK_AUTH_TOKEN") or auth_token or ""
+    if token in _NGROK_PLACEHOLDERS:
+        log.warning(
+            "ngrok auth token not set — hub running on localhost only.\n"
+            "  To expose publicly:\n"
+            "    1. Get your token from https://dashboard.ngrok.com/get-started/your-authtoken\n"
+            "    2. Set it in imm_config.yaml  →  ngrok.auth_token: \"<your_token>\"\n"
+            "       OR export NGROK_AUTH_TOKEN=<your_token>  before running deploy.py"
+        )
+        return ""
     try:
         from pyngrok import ngrok, conf
-        if auth_token:
-            conf.get_default().auth_token = auth_token
+        if token:
+            conf.get_default().auth_token = token
         tunnel   = ngrok.connect(port, "http")
         url      = tunnel.public_url
         https    = url.replace("http://", "https://")
